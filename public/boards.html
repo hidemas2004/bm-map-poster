@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ポスター掲示板管理 掲示板マスタ一覧</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="list-page">
+<header id="header">
+  <div class="header-row">
+    <h1>掲示板マスタ一覧</h1>
+    <div class="header-actions">
+      <a href="/" id="back-link">地図に戻る</a>
+    </div>
+  </div>
+</header>
+<main class="list-main">
+  <div class="list-toolbar">
+    <span id="board-count"></span>
+    <button id="csv-download-button" type="button">CSVダウンロード</button>
+  </div>
+  <div class="data-table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr><th>board_id</th><th>住所</th><th>目印</th><th>緯度</th><th>経度</th><th>ステータス</th><th>担当者</th><th>貼付日時</th></tr>
+      </thead>
+      <tbody id="boards-tbody"></tbody>
+    </table>
+  </div>
+
+  <section class="import-section">
+    <h2>CSVで追加・修正</h2>
+    <p class="import-hint">
+      ダウンロードしたCSVを編集してアップロードしてください（管理者限定）。<code>board_id</code>が
+      既存なら上書き、なければ新規追加されます。<code>board_id</code>・<code>lat</code>・<code>lng</code>は必須です。<br>
+      <code>assignee_id</code>列はセルの内容がそのまま反映されます（空欄にすると未担当になります。
+      担当者の一括割り当てはこの列をまとめて編集してアップロードしてください）。<br>
+      <code>status</code>列を空欄のままにすると、既存の掲示板は現在のステータスを維持し
+      （選挙当日に貼付状況を誤って巻き戻さないため）、新規の掲示板は「未着手」になります。
+    </p>
+    <input type="file" id="import-file" accept=".csv,text/csv">
+    <button id="import-button" type="button">アップロードして反映</button>
+    <p class="error" id="import-error"></p>
+    <p class="success" id="import-success"></p>
+  </section>
+</main>
+<script src="/config.js"></script>
+<script src="/boards.js"></script>
+</body>
+</html>

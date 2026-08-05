@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "bm-map-poster",
+  "compatibility_date": "2026-07-26",
+  "main": "worker/index.ts",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "bm-poster-db",
+      // ローカル開発（--local）はこのIDに関わらずSQLiteエミュレーションで動作する。
+      // 初回構築時に `npx wrangler d1 create bm-poster-db` で作成し、実際のIDに置き換える。
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ]
+  // 複数自治体の並行運用は `env.<地域ID>` として `npm run new-region` が追記する
+  // （bm-map-postingと同じ方式。詳細はREADME.md「複数地域の並行運用」参照）。
+}
