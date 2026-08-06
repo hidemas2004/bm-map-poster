@@ -28,7 +28,8 @@ body.map-page { display: flex; flex-direction: column; overflow: hidden; }
 .header-row-stats strong { color: #f3f4f6; font-weight: 700; }
 .header-actions { display: flex; gap: 6px; margin-left: auto; align-items: center; }
 #header h1 { font-size: 15px; margin: 0; white-space: nowrap; }
-#header select { font-size: 13px; padding: 4px 6px; border-radius: 6px; border: none; cursor: pointer; }
+#header select { font-size: 13px; height: 30px; padding: 0 6px; border-radius: 6px; border: none; cursor: pointer; }
+.label-toggle { display: flex; align-items: center; gap: 4px; font-size: 12px; color: #f3f4f6; cursor: pointer; white-space: nowrap; }
 #header button {
   background: #1f2937; color: #f3f4f6; border: 1px solid #374151; border-radius: 6px;
   padding: 6px 10px; font-size: 16px; cursor: pointer;
@@ -41,10 +42,17 @@ body.map-page { display: flex; flex-direction: column; overflow: hidden; }
 }
 #header button.active { background: #2563eb; border-color: #2563eb; }
 
-/* ステータスフィルタ（トグルボタン群）。既定は全ボタンactive=全表示。 */
+/* ステータスフィルタ（トグルボタン群）。既定は全ボタンactive=全表示。
+   背景色はJS側（app.js buildStatusFilterButtons）でSTATUS_COLORSから設定し、ピンの色と揃える。
+   高さは担当者フィルタ(select)と、横幅はボタン同士で揃える。 */
 .status-filter { display: flex; gap: 4px; }
+/* flex-shrink:0とwhite-space:nowrapが無いと、ヘッダーが狭い時にボタン幅が縮んで文字が折り返し、
+   .header-rowのoverflow-x:hidden（overflow-yも連動してクリップされる。#header付近のコメント参照）
+   により折り返した2行目が見えなくなる（「トラブル」が「トラ」だけに見える不具合の原因）。 */
 .status-filter button {
-  font-size: 12px; padding: 5px 10px; opacity: 0.4;
+  flex-shrink: 0; white-space: nowrap;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; height: 30px; width: 64px; padding: 0; color: #f3f4f6; opacity: 0.5;
 }
 .status-filter button.active { opacity: 1; border-color: #f3f4f6; }
 
@@ -138,8 +146,21 @@ body.list-page #header a#back-link {
 .popup-content .edit-form { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid #e5e7eb; padding-top: 8px; }
 .popup-content .edit-form label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: #4b5563; }
 .popup-content .edit-form select { padding: 6px; font-size: 14px; }
+.popup-content .edit-form textarea { width: 100%; padding: 6px; font-size: 13px; font-family: inherit; resize: vertical; }
 .popup-content .edit-form button { padding: 8px; background: #2563eb; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
 .popup-content .error { color: #dc2626; font-size: 12px; }
+
+/* しずく型ピン（app.js buildPinIcon）。svgは常にpin-wrapの左上=(0,0)に固定表示され、
+   iconAnchorがその下端中央を指すので、ラベルの有無に関わらずピン先端の位置（クリック判定位置）
+   はズレない。ラベルはposition:absoluteでピン本体の上に浮かせて重ねる。 */
+.pin-wrap { position: relative; width: 100%; height: 100%; }
+.pin-wrap svg { display: block; }
+.pin-label {
+  position: absolute; left: 50%; bottom: 100%; transform: translateX(-50%); margin-bottom: 2px;
+  background: #ffffff; color: #111827; border: 1px solid #9ca3af;
+  font-size: 10px; line-height: 1.4; padding: 1px 5px;
+  border-radius: 4px; white-space: nowrap; pointer-events: none;
+}
 
 .gps-dot {
   width: 16px; height: 16px; border-radius: 50%;

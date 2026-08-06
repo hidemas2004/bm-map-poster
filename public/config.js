@@ -8,8 +8,8 @@ const MAP_INITIAL_ZOOM = 13;
 
 // ステータスごとのピン色（worker/boards.tsのBOARD_STATUSESと対応。値・順序を変える場合は両方直すこと）
 const STATUS_COLORS = {
-	未着手: '#6b7280', // グレー
-	貼付済: '#16a34a', // 緑
+	未着手: '#1d4ed8', // 濃いめのブルー
+	貼付済: '#f97316', // オレンジ
 	トラブル: '#dc2626', // 赤
 };
 const STATUS_LABELS = Object.keys(STATUS_COLORS);

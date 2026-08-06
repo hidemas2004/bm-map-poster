@@ -47,6 +47,7 @@ function buildBoardRow(board) {
 
 	addCell(tr, board.assignee_name || '未担当');
 	addCell(tr, board.posted_at ? new Date(board.posted_at).toLocaleString('ja-JP') : '');
+	addCell(tr, board.memo);
 	return tr;
 }
 
@@ -57,7 +58,7 @@ async function loadBoards() {
 	tbody.innerHTML = '';
 
 	if (boards.length === 0) {
-		tbody.innerHTML = '<tr><td colspan="8" class="empty-row">掲示板データがありません</td></tr>';
+		tbody.innerHTML = '<tr><td colspan="9" class="empty-row">掲示板データがありません</td></tr>';
 	} else {
 		for (const board of boards) {
 			tbody.appendChild(buildBoardRow(board));

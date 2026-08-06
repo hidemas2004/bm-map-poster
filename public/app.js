@@ -13,6 +13,7 @@ const state = {
 	activeUsers: [],
 	assigneeFilter: '', // ''=全体表示、それ以外はuser_id
 	statusFilter: new Set(STATUS_LABELS), // 表示中のステータス集合。デフォルト全表示
+	showLabels: false, // ピンにboard_idを表示するか。デフォルトOFF（掲示板数が多いと地図が文字だらけになるため）
 	watchId: null,
 	gpsMarker: null,
 };
@@ -40,36 +41,62 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 	attribution: '&copy; OpenStreetMap contributors',
 }).addTo(map);
 
+// 担当者フィルタの特殊値。実際のuser_idと衝突しない値である必要がある。
+const UNASSIGNED_FILTER_VALUE = '__unassigned__';
+
+function matchesAssigneeFilter(row) {
+	if (!state.assigneeFilter) return true;
+	if (state.assigneeFilter === UNASSIGNED_FILTER_VALUE) return !row.assignee_id;
+	return row.assignee_id === state.assigneeFilter;
+}
+
 function markerVisible(row) {
 	if (!state.statusFilter.has(row.status)) return false;
-	if (state.assigneeFilter && row.assignee_id !== state.assigneeFilter) return false;
+	if (!matchesAssigneeFilter(row)) return false;
 	return true;
 }
 
-function styleForStatus(status) {
-	return {
-		radius: 9,
-		color: '#ffffff',
-		weight: 2,
-		fillColor: STATUS_COLORS[status] ?? '#6b7280',
-		fillOpacity: 0.9,
-	};
+// しずく型ピン（円が上・下端が尖る形）。iconAnchorは先端（下端）に合わせてあるので、
+// ラベル表示時はピンの上側にラベルを重ねる（先端位置＝クリック判定位置がズレないように）。
+const PIN_SIZE = 28;
+function buildPinIcon(row) {
+	const fill = STATUS_COLORS[row.status] ?? '#6b7280';
+	const label = state.showLabels
+		? `<div class="pin-label">${row.board_id}</div>`
+		: '';
+	const html = `
+		<div class="pin-wrap">
+			${label}
+			<svg width="${PIN_SIZE}" height="${PIN_SIZE}" viewBox="0 0 24 24">
+				<path d="M12 0C7.03 0 3 4.03 3 9c0 6.75 9 15 9 15s9-8.25 9-15c0-4.97-4.03-9-9-9z"
+					fill="${fill}" stroke="#ffffff" stroke-width="1.5" />
+				<circle cx="12" cy="9" r="3.2" fill="#ffffff" />
+			</svg>
+		</div>
+	`;
+	return L.divIcon({
+		className: '',
+		html,
+		iconSize: [PIN_SIZE, PIN_SIZE],
+		iconAnchor: [PIN_SIZE / 2, PIN_SIZE],
+		popupAnchor: [0, -PIN_SIZE],
+	});
 }
+
+// フィルタ対象外のピンは地図から消さず、薄く表示する（全体の中での位置関係が分かるように）。
+const FILTERED_OUT_OPACITY = 0.3;
 
 function addOrUpdateMarker(row) {
 	let marker = state.markers.get(row.board_id);
 	if (!marker) {
-		marker = L.circleMarker([row.lat, row.lng], styleForStatus(row.status));
+		marker = L.marker([row.lat, row.lng], { icon: buildPinIcon(row) });
 		marker.on('click', () => openPopup(row.board_id));
+		marker.addTo(map);
 		state.markers.set(row.board_id, marker);
 	} else {
-		marker.setStyle(styleForStatus(row.status));
+		marker.setIcon(buildPinIcon(row));
 	}
-	if (markerVisible(row)) {
-		if (!map.hasLayer(marker)) marker.addTo(map);
-	} else if (map.hasLayer(marker)) {
-		map.removeLayer(marker);
-	}
+	marker.setOpacity(markerVisible(row) ? 1 : FILTERED_OUT_OPACITY);
 }
 
 function redrawMarkers() {
@@ -82,7 +109,7 @@ function updateHeaderStats() {
 	let posted = 0;
 	let trouble = 0;
 	for (const row of state.boards.values()) {
-		if (state.assigneeFilter && row.assignee_id !== state.assigneeFilter) continue;
+		if (!matchesAssigneeFilter(row)) continue;
 		total++;
 		if (row.status === '貼付済') posted++;
 		if (row.status === 'トラブル') trouble++;
@@ -105,6 +132,11 @@ function populateAssigneeFilterSelect() {
 	optAll.textContent = '(全体表示)';
 	select.appendChild(optAll);
 
+	const optUnassigned = document.createElement('option');
+	optUnassigned.value = UNASSIGNED_FILTER_VALUE;
+	optUnassigned.textContent = '(未設定)';
+	select.appendChild(optUnassigned);
+
 	for (const user of state.activeUsers) {
 		const option = document.createElement('option');
 		option.value = user.user_id;
@@ -120,6 +152,11 @@ document.getElementById('assignee-filter').addEventListener('change', (e) => {
 	updateHeaderStats();
 });
 
+document.getElementById('label-toggle').addEventListener('change', (e) => {
+	state.showLabels = e.target.checked;
+	redrawMarkers();
+});
+
 function buildStatusFilterButtons() {
 	const container = document.getElementById('status-filter');
 	container.innerHTML = '';
@@ -128,6 +165,8 @@ function buildStatusFilterButtons() {
 		button.type = 'button';
 		button.textContent = status;
 		button.className = state.statusFilter.has(status) ? 'active' : '';
+		button.style.background = STATUS_COLORS[status] ?? '#6b7280';
+		button.style.borderColor = STATUS_COLORS[status] ?? '#6b7280';
 		button.addEventListener('click', () => {
 			if (state.statusFilter.has(status)) {
 				state.statusFilter.delete(status);
@@ -165,10 +204,9 @@ function buildPopupContent(row) {
 		<div class="row"><span>担当者:</span><span>${row.assignee_name || '未担当'}</span></div>
 		${row.posted_at ? `<div class="row"><span>貼付日時:</span><span>${new Date(row.posted_at).toLocaleString('ja-JP')}</span></div>` : ''}
 		<div class="edit-form">
-			<label>ステータス
-				<select data-role="status-select">
-					${STATUS_LABELS.map((s) => `<option value="${s}" ${s === row.status ? 'selected' : ''}>${s}</option>`).join('')}
-				</select>
+			<label>ステータス（タップで切替）
+				<button type="button" class="status-cycle-button" data-role="status-cycle-button"
+					data-status="${row.status}" style="background:${STATUS_COLORS[row.status]}">${row.status}</button>
 			</label>
 			<label>担当者
 				<select data-role="assignee-select">
@@ -176,22 +214,34 @@ function buildPopupContent(row) {
 					${state.activeUsers.map((u) => `<option value="${u.user_id}" ${u.user_id === row.assignee_id ? 'selected' : ''}>${u.name}</option>`).join('')}
 				</select>
 			</label>
+			<label>メモ
+				<textarea data-role="memo-input" rows="2">${row.memo ?? ''}</textarea>
+			</label>
 			<p class="error" data-role="update-error"></p>
 			<button type="button" data-action="save">更新する</button>
 		</div>
 	`;
 
+	const statusButton = container.querySelector('[data-role="status-cycle-button"]');
+	statusButton.addEventListener('click', () => {
+		const next = STATUS_LABELS[(STATUS_LABELS.indexOf(statusButton.dataset.status) + 1) % STATUS_LABELS.length];
+		statusButton.dataset.status = next;
+		statusButton.textContent = next;
+		statusButton.style.background = STATUS_COLORS[next];
+	});
+
 	container.querySelector('[data-action="save"]').addEventListener('click', async () => {
-		const statusSelect = container.querySelector('[data-role="status-select"]');
 		const assigneeSelect = container.querySelector('[data-role="assignee-select"]');
+		const memoInput = container.querySelector('[data-role="memo-input"]');
 		const errorEl = container.querySelector('[data-role="update-error"]');
 		const res = await apiFetch('/api/board/update', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				board_id: row.board_id,
-				status: statusSelect.value,
+				status: statusButton.dataset.status,
 				assignee_id: assigneeSelect.value || null,
+				memo: memoInput.value,
 			}),
 		});
 		const data = await res.json();

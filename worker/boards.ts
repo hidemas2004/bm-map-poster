@@ -18,6 +18,7 @@ interface BoardRow {
 	assignee_id: string | null;
 	assignee_name: string;
 	posted_at: string | null;
+	memo: string;
 }
 
 export async function listBoards(env: BoardsEnv): Promise<Response> {
@@ -28,7 +29,7 @@ export async function listBoards(env: BoardsEnv): Promise<Response> {
 export async function exportBoardsCsv(env: BoardsEnv): Promise<Response> {
 	const { results } = await env.DB.prepare('SELECT * FROM poster_boards ORDER BY board_id').all<BoardRow>();
 	const csv = toCsv(
-		['board_id', 'address', 'location_note', 'lat', 'lng', 'status', 'assignee_id', 'assignee_name', 'posted_at'],
+		['board_id', 'address', 'location_note', 'lat', 'lng', 'status', 'assignee_id', 'assignee_name', 'posted_at', 'memo'],
 		results.map((r) => [
 			r.board_id,
 			r.address,
@@ -39,6 +40,7 @@ export async function exportBoardsCsv(env: BoardsEnv): Promise<Response> {
 			r.assignee_id ?? '',
 			r.assignee_name,
 			r.posted_at ?? '',
+			r.memo,
 		]),
 	);
 	return csvResponse(csv, 'poster_boards.csv');
@@ -46,12 +48,13 @@ export async function exportBoardsCsv(env: BoardsEnv): Promise<Response> {
 
 /**
  * 掲示板マスタ一括投入・更新（管理者限定）。`board_id`が既存ならUPSERT、なければ新規追加。
- * CSVヘッダ: board_id, address, location_note, lat, lng, status, assignee_id
- * （board_id, lat, lng は必須。address, location_note は省略可）。
+ * CSVヘッダ: board_id, address, location_note, lat, lng, status, assignee_id, memo
+ * （board_id, lat, lng は必須。address, location_note, memo は省略可）。
  * - assignee_id列はセルの内容がそのまま反映される（空欄=担当者なし。「未担当に戻す」もこの列を
  *   空欄にするだけでよい。passphraseのような「空欄=変更なし」特別扱いはしない）。
  * - status列を空欄にすると、既存行は現在のステータスを維持し、新規行は「未着手」になる
  *   （選挙当日、進行中の状態を一括CSVで誤って巻き戻さないための配慮）。
+ * - memo列はaddress/location_noteと同様、セルの内容がそのまま反映される（列自体が無い場合は空欄扱い）。
  */
 export async function importBoards(request: Request, env: BoardsEnv): Promise<Response> {
 	let text = await request.text();
@@ -71,6 +74,7 @@ export async function importBoards(request: Request, env: BoardsEnv): Promise<Re
 		lng: header.indexOf('lng'),
 		status: header.indexOf('status'),
 		assignee_id: header.indexOf('assignee_id'),
+		memo: header.indexOf('memo'),
 	};
 	if (colIndex.board_id === -1 || colIndex.lat === -1 || colIndex.lng === -1) {
 		return Response.json({ error: 'CSVヘッダに board_id, lat, lng が必要です' }, { status: 400 });
@@ -105,6 +109,7 @@ export async function importBoards(request: Request, env: BoardsEnv): Promise<Re
 
 		const address = colIndex.address !== -1 ? (r[colIndex.address] ?? '').trim() : '';
 		const locationNote = colIndex.location_note !== -1 ? (r[colIndex.location_note] ?? '').trim() : '';
+		const memo = colIndex.memo !== -1 ? (r[colIndex.memo] ?? '').trim() : '';
 
 		const statusRaw = colIndex.status !== -1 ? (r[colIndex.status] ?? '').trim() : '';
 		let status: BoardStatus;
@@ -134,13 +139,13 @@ export async function importBoards(request: Request, env: BoardsEnv): Promise<Re
 
 		statements.push(
 			env.DB.prepare(
-				`INSERT INTO poster_boards (board_id, address, location_note, lat, lng, status, assignee_id, assignee_name)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				`INSERT INTO poster_boards (board_id, address, location_note, lat, lng, status, assignee_id, assignee_name, memo)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 				 ON CONFLICT(board_id) DO UPDATE SET
 				   address = excluded.address, location_note = excluded.location_note,
 				   lat = excluded.lat, lng = excluded.lng, status = excluded.status,
-				   assignee_id = excluded.assignee_id, assignee_name = excluded.assignee_name`,
-			).bind(boardId, address, locationNote, lat, lng, status, assigneeId, assigneeName),
+				   assignee_id = excluded.assignee_id, assignee_name = excluded.assignee_name, memo = excluded.memo`,
+			).bind(boardId, address, locationNote, lat, lng, status, assigneeId, assigneeName, memo),
 		);
 	}
 	await env.DB.batch(statements);
@@ -149,15 +154,17 @@ export async function importBoards(request: Request, env: BoardsEnv): Promise<Re
 }
 
 /**
- * 地図ピンのポップアップから呼ばれる、ステータス・担当者の更新。status/assignee_idは
- * どちらか一方だけの指定でもよい（bodyに含まれていないフィールドは変更しない）。
+ * 地図ピンのポップアップから呼ばれる、ステータス・担当者・メモの更新。status/assignee_id/memoは
+ * いずれか一部だけの指定でもよい（bodyに含まれていないフィールドは変更しない）。
  * ステータスが'貼付済'になった場合、posted_atを更新時刻で自動更新する
  * （それ以外への変更ではposted_atは変更しない＝直近に貼付済になった日時の記録として残す）。
+ * memoの変更はposter_activity_logには記録しない（自由記述の備考欄のため、変更履歴の対象は
+ * ステータス・担当者のみとする既存方針を踏襲）。
  */
 export async function updateBoard(request: Request, env: BoardsEnv, user: SessionUser): Promise<Response> {
 	const body = await request
-		.json<{ board_id?: string; status?: string; assignee_id?: string | null }>()
-		.catch(() => ({}) as { board_id?: string; status?: string; assignee_id?: string | null });
+		.json<{ board_id?: string; status?: string; assignee_id?: string | null; memo?: string }>()
+		.catch(() => ({}) as { board_id?: string; status?: string; assignee_id?: string | null; memo?: string });
 	const boardId = String(body.board_id ?? '');
 	if (!boardId) {
 		return Response.json({ error: 'board_id を指定してください' }, { status: 400 });
@@ -199,11 +206,15 @@ export async function updateBoard(request: Request, env: BoardsEnv, user: Sessio
 		}
 	}
 
+	const newMemo = body.memo !== undefined ? body.memo : current.memo;
+
 	const now = new Date().toISOString();
 	const postedAt = newStatus === '貼付済' ? now : current.posted_at;
 
-	await env.DB.prepare('UPDATE poster_boards SET status = ?, assignee_id = ?, assignee_name = ?, posted_at = ? WHERE board_id = ?')
-		.bind(newStatus, newAssigneeId, newAssigneeName, postedAt, boardId)
+	await env.DB.prepare(
+		'UPDATE poster_boards SET status = ?, assignee_id = ?, assignee_name = ?, posted_at = ?, memo = ? WHERE board_id = ?',
+	)
+		.bind(newStatus, newAssigneeId, newAssigneeName, postedAt, newMemo, boardId)
 		.run();
 
 	if (newStatus !== current.status || newAssigneeId !== current.assignee_id) {

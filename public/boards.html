@@ -23,7 +23,7 @@
   <div class="data-table-wrap">
     <table class="data-table">
       <thead>
-        <tr><th>board_id</th><th>住所</th><th>目印</th><th>緯度</th><th>経度</th><th>ステータス</th><th>担当者</th><th>貼付日時</th></tr>
+        <tr><th>board_id</th><th>住所</th><th>目印</th><th>緯度</th><th>経度</th><th>ステータス</th><th>担当者</th><th>貼付日時</th><th>メモ</th></tr>
       </thead>
       <tbody id="boards-tbody"></tbody>
     </table>
@@ -37,7 +37,8 @@
       <code>assignee_id</code>列はセルの内容がそのまま反映されます（空欄にすると未担当になります。
       担当者の一括割り当てはこの列をまとめて編集してアップロードしてください）。<br>
       <code>status</code>列を空欄のままにすると、既存の掲示板は現在のステータスを維持し
-      （選挙当日に貼付状況を誤って巻き戻さないため）、新規の掲示板は「未着手」になります。
+      （選挙当日に貼付状況を誤って巻き戻さないため）、新規の掲示板は「未着手」になります。<br>
+      <code>memo</code>列はセルの内容がそのまま反映されます（空欄にするとメモが消えます）。
     </p>
     <input type="file" id="import-file" accept=".csv,text/csv">
     <button id="import-button" type="button">アップロードして反映</button>
