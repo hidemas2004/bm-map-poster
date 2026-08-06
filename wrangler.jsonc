@@ -13,8 +13,7 @@
       "binding": "DB",
       "database_name": "bm-poster-db",
       // ローカル開発（--local）はこのIDに関わらずSQLiteエミュレーションで動作する。
-      // 初回構築時に `npx wrangler d1 create bm-poster-db` で作成し、実際のIDに置き換える。
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_id": "8a3e158e-509a-4f3f-9b89-6599173f4f83"
     }
   ]
   // 複数自治体の並行運用は `env.<地域ID>` として `npm run new-region` が追記する
