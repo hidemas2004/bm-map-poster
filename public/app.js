@@ -90,7 +90,7 @@ function addOrUpdateMarker(row) {
 	let marker = state.markers.get(row.board_id);
 	if (!marker) {
 		marker = L.marker([row.lat, row.lng], { icon: buildPinIcon(row) });
-		marker.on('click', () => openPopup(row.board_id));
+		marker.bindPopup(() => buildPopupContent(state.boards.get(row.board_id)));
 		marker.addTo(map);
 		state.markers.set(row.board_id, marker);
 	} else {
@@ -185,12 +185,6 @@ function buildStatusFilterButtons() {
 // 「ポップアップ外クリックで自動クローズ」機構が反応して閉じてしまうため、
 // 生成した要素は必ず disableClickPropagation で地図への伝播を止める。
 
-function openPopup(boardId) {
-	const row = state.boards.get(boardId);
-	const marker = state.markers.get(boardId);
-	marker.bindPopup(buildPopupContent(row)).openPopup();
-}
-
 function buildPopupContent(row) {
 	const container = document.createElement('div');
 	container.className = 'popup-content';
@@ -252,9 +246,7 @@ function buildPopupContent(row) {
 		state.boards.set(row.board_id, data);
 		addOrUpdateMarker(data);
 		updateHeaderStats();
-		const marker = state.markers.get(row.board_id);
-		marker.setPopupContent(buildPopupContent(data));
-		marker.getPopup().update();
+		state.markers.get(row.board_id).closePopup();
 	});
 
 	return container;
