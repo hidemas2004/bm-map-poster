@@ -16,6 +16,7 @@ const state = {
 	showLabels: false, // ピンにboard_idを表示するか。デフォルトOFF（掲示板数が多いと地図が文字だらけになるため）
 	watchId: null,
 	gpsMarker: null,
+	routeLine: null,
 };
 
 async function apiFetch(path, options = {}) {
@@ -304,6 +305,40 @@ gpsButton.addEventListener('click', () => {
 		},
 		{ enableHighAccuracy: true },
 	);
+});
+
+// ---- 経路表示 ----
+// 自分が担当する未着手ピンを緯度の降順（北→南）に並べただけの単純なルート。
+// 道路網を考慮したTSP等ではなく、前日までに立てた移動計画に沿って上から順に処理していく運用を想定。
+// チェックを入れている間はステータス変更があってもルートを自動再計算しない（歩行中に線が動くと
+// かえって使いにくいため）。チェックを外して入れ直したときだけ、その時点の未着手ピンで再計算する。
+
+function computeMyRoute() {
+	return [...state.boards.values()]
+		.filter((row) => row.assignee_id === session.user.user_id && row.status === '未着手')
+		.sort((a, b) => b.lat - a.lat);
+}
+
+const routeToggle = document.getElementById('route-toggle');
+routeToggle.addEventListener('change', (e) => {
+	if (state.routeLine) {
+		map.removeLayer(state.routeLine);
+		state.routeLine = null;
+	}
+	if (!e.target.checked) return;
+
+	const rows = computeMyRoute();
+	if (rows.length === 0) {
+		alert('担当している未着手のピンがありません');
+		routeToggle.checked = false;
+		return;
+	}
+	state.routeLine = L.polyline(
+		rows.map((row) => [row.lat, row.lng]),
+		{ color: ROUTE_LINE_COLOR, weight: 4, opacity: 0.8, dashArray: '8 6' },
+	).addTo(map);
+	state.routeLine.bringToBack();
+	map.fitBounds(state.routeLine.getBounds(), { padding: [40, 40] });
 });
 
 // ---- メニュー ----
