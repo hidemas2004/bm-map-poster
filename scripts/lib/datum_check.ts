@@ -1,5 +1,5 @@
-import type { LatLng } from './geodetic.ts';
-import { haversineDistanceMeters, tokyoDatumToWgs84 } from './geodetic.ts';
+import type { LatLng } from '../../worker/lib/geodetic.ts';
+import { haversineDistanceMeters, tokyoDatumToWgs84 } from '../../worker/lib/geodetic.ts';
 import { GeocodeServiceError, geocodeAddress, normalizeAddress } from './geocode.ts';
 import { mapWithConcurrency } from './concurrency.ts';
 

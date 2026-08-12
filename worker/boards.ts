@@ -1,6 +1,5 @@
 import { csvResponse, parseCsv, toCsv } from './csv';
 import type { SessionUser } from './auth';
-import { checkAndCorrectDatum, type DatumRowResult } from './lib/datum_check';
 
 export interface BoardsEnv {
 	DB: D1Database;
@@ -20,6 +19,7 @@ interface BoardRow {
 	assignee_name: string;
 	posted_at: string | null;
 	memo: string;
+	location_uncertain: number;
 }
 
 export async function listBoards(env: BoardsEnv): Promise<Response> {
@@ -30,7 +30,19 @@ export async function listBoards(env: BoardsEnv): Promise<Response> {
 export async function exportBoardsCsv(env: BoardsEnv): Promise<Response> {
 	const { results } = await env.DB.prepare('SELECT * FROM poster_boards ORDER BY board_id').all<BoardRow>();
 	const csv = toCsv(
-		['board_id', 'address', 'location_note', 'lat', 'lng', 'status', 'assignee_id', 'assignee_name', 'posted_at', 'memo'],
+		[
+			'board_id',
+			'address',
+			'location_note',
+			'lat',
+			'lng',
+			'status',
+			'assignee_id',
+			'assignee_name',
+			'posted_at',
+			'memo',
+			'location_uncertain',
+		],
 		results.map((r) => [
 			r.board_id,
 			r.address,
@@ -42,36 +54,27 @@ export async function exportBoardsCsv(env: BoardsEnv): Promise<Response> {
 			r.assignee_name,
 			r.posted_at ?? '',
 			r.memo,
+			r.location_uncertain,
 		]),
 	);
 	return csvResponse(csv, 'poster_boards.csv');
 }
 
-function datumCheckPayload(datumCheck: DatumRowResult[]) {
-	return datumCheck.map((r) => ({
-		line: r.line,
-		bucket: r.bucket,
-		dist_raw_m: r.distRawM,
-		dist_conv_m: r.distConvM,
-	}));
-}
-
 /**
  * 掲示板マスタ一括投入・更新（管理者限定）。`board_id`が既存ならUPSERT、なければ新規追加。
- * CSVヘッダ: board_id, address, location_note, lat, lng, status, assignee_id, memo
- * （board_id, lat, lng は必須。address, location_note, memo は省略可）。
+ * CSVヘッダ: board_id, address, location_note, lat, lng, status, assignee_id, memo, location_uncertain
+ * （board_id, lat, lng は必須。address, location_note, memo, location_uncertain は省略可）。
  * - assignee_id列はセルの内容がそのまま反映される（空欄=担当者なし。「未担当に戻す」もこの列を
  *   空欄にするだけでよい。passphraseのような「空欄=変更なし」特別扱いはしない）。
  * - status列を空欄にすると、既存行は現在のステータスを維持し、新規行は「未着手」になる
  *   （選挙当日、進行中の状態を一括CSVで誤って巻き戻さないための配慮）。
  * - memo列はaddress/location_noteと同様、セルの内容がそのまま反映される（列自体が無い場合は空欄扱い）。
- * - 住所と座標を突き合わせ、日本測地系（Tokyo Datum）のズレを自動検出・補正する
- *   （bm-map-posting issue#16と同根、bm-map-poster issue#3）。バッチ全体が日本測地系とみなせる
- *   場合は全行を世界測地系に補正してからインポートする。整合性が確認できない行が多い場合は
- *   中断し、`force=true`クエリパラメータ付きで再送すると警告を無視してそのままインポートできる。
+ * - location_uncertain列はstatus列と同じ扱い（空欄・列自体が無い場合は既存行は現状維持、新規行は
+ *   0=確認済み扱い）。住所とCSV座標の整合性をジオコーディングで確認できたかどうかのフラグで、
+ *   `scripts/upload-boards.mjs`が算出して埋める。このWorker側では測地系チェック・ジオコーディングは
+ *   一切行わない（Cloudflare Workersのsubrequest数上限のため、issue参照）。CSVの座標はそのまま反映する。
  */
 export async function importBoards(request: Request, env: BoardsEnv): Promise<Response> {
-	const force = new URL(request.url).searchParams.get('force') === 'true';
 	let text = await request.text();
 	if (text.charCodeAt(0) === 0xfeff) text = text.slice(1); // UTF-8 BOM除去
 
@@ -90,6 +93,7 @@ export async function importBoards(request: Request, env: BoardsEnv): Promise<Re
 		status: header.indexOf('status'),
 		assignee_id: header.indexOf('assignee_id'),
 		memo: header.indexOf('memo'),
+		location_uncertain: header.indexOf('location_uncertain'),
 	};
 	if (colIndex.board_id === -1 || colIndex.lat === -1 || colIndex.lng === -1) {
 		return Response.json({ error: 'CSVヘッダに board_id, lat, lng が必要です' }, { status: 400 });
@@ -102,10 +106,15 @@ export async function importBoards(request: Request, env: BoardsEnv): Promise<Re
 
 	const [{ results: activeUsers }, { results: existingBoards }] = await Promise.all([
 		env.DB.prepare('SELECT user_id, name FROM users WHERE active = 1').all<{ user_id: string; name: string }>(),
-		env.DB.prepare('SELECT board_id, status FROM poster_boards').all<{ board_id: string; status: BoardStatus }>(),
+		env.DB.prepare('SELECT board_id, status, location_uncertain FROM poster_boards').all<{
+			board_id: string;
+			status: BoardStatus;
+			location_uncertain: number;
+		}>(),
 	]);
 	const userNameById = new Map(activeUsers.map((u) => [u.user_id, u.name]));
 	const existingStatusById = new Map(existingBoards.map((b) => [b.board_id, b.status]));
+	const existingUncertainById = new Map(existingBoards.map((b) => [b.board_id, b.location_uncertain]));
 
 	interface ParsedRow {
 		lineNo: number;
@@ -118,6 +127,7 @@ export async function importBoards(request: Request, env: BoardsEnv): Promise<Re
 		assigneeId: string | null;
 		assigneeName: string;
 		memo: string;
+		locationUncertain: number;
 	}
 
 	const parsedRows: ParsedRow[] = [];
@@ -165,70 +175,49 @@ export async function importBoards(request: Request, env: BoardsEnv): Promise<Re
 			assigneeName = name;
 		}
 
-		parsedRows.push({ lineNo, boardId, address, locationNote, lat, lng, status, assigneeId, assigneeName, memo });
+		const uncertainRaw = colIndex.location_uncertain !== -1 ? (r[colIndex.location_uncertain] ?? '').trim() : '';
+		const locationUncertain = uncertainRaw ? (uncertainRaw === '1' ? 1 : 0) : (existingUncertainById.get(boardId) ?? 0);
+
+		parsedRows.push({
+			lineNo,
+			boardId,
+			address,
+			locationNote,
+			lat,
+			lng,
+			status,
+			assigneeId,
+			assigneeName,
+			memo,
+			locationUncertain,
+		});
 	}
 
-	// 測地系（日本測地系/世界測地系）のズレを自動検出・補正する（bm-map-poster issue#3）。
-	// 住所テキストをジオコーディングした期待座標とCSVの座標を突き合わせ、バッチ全体が
-	// 日本測地系とみなせる場合は全行を世界測地系に補正してからインポートする。
-	const datumCheck = await checkAndCorrectDatum(
-		parsedRows.map((r) => ({ line: r.lineNo, address: r.address, lat: r.lat, lng: r.lng })),
-	);
-
-	if (datumCheck.verdict === 'abort' && !force) {
-		return Response.json(
-			{
-				error: '住所と座標の整合性が確認できないため、インポートを中断しました。行ごとの判定結果を確認の上、必要であれば強制インポートしてください。',
-				datum_check: {
-					ok_count: datumCheck.okCount,
-					candidate_count: datumCheck.candidateCount,
-					unresolved_count: datumCheck.unresolvedCount,
-					no_address_count: datumCheck.noAddressCount,
-					rows: datumCheckPayload(datumCheck.rows),
-				},
-			},
-			{ status: 400 },
-		);
-	}
-
-	const finalRows =
-		datumCheck.verdict === 'correct_all'
-			? parsedRows.map((r) => {
-					const corrected = datumCheck.correctedCoords.get(r.lineNo);
-					return corrected ? { ...r, lat: corrected.lat, lng: corrected.lng } : r;
-				})
-			: parsedRows;
-
-	const statements = finalRows.map((r) =>
+	const statements = parsedRows.map((r) =>
 		env.DB.prepare(
-			`INSERT INTO poster_boards (board_id, address, location_note, lat, lng, status, assignee_id, assignee_name, memo)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`INSERT INTO poster_boards (board_id, address, location_note, lat, lng, status, assignee_id, assignee_name, memo, location_uncertain)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(board_id) DO UPDATE SET
 			   address = excluded.address, location_note = excluded.location_note,
 			   lat = excluded.lat, lng = excluded.lng, status = excluded.status,
-			   assignee_id = excluded.assignee_id, assignee_name = excluded.assignee_name, memo = excluded.memo`,
-		).bind(r.boardId, r.address, r.locationNote, r.lat, r.lng, r.status, r.assigneeId, r.assigneeName, r.memo),
+			   assignee_id = excluded.assignee_id, assignee_name = excluded.assignee_name, memo = excluded.memo,
+			   location_uncertain = excluded.location_uncertain`,
+		).bind(
+			r.boardId,
+			r.address,
+			r.locationNote,
+			r.lat,
+			r.lng,
+			r.status,
+			r.assigneeId,
+			r.assigneeName,
+			r.memo,
+			r.locationUncertain,
+		),
 	);
 	await env.DB.batch(statements);
 
-	const forced = datumCheck.verdict === 'abort' && force;
-	return Response.json({
-		imported: statements.length,
-		datum_corrected: datumCheck.verdict === 'correct_all',
-		corrected_count: datumCheck.correctedCount,
-		datum_check_note: datumCheck.note,
-		warnings: datumCheck.warnings,
-		datum_check_forced: forced,
-		datum_check: forced
-			? {
-					ok_count: datumCheck.okCount,
-					candidate_count: datumCheck.candidateCount,
-					unresolved_count: datumCheck.unresolvedCount,
-					no_address_count: datumCheck.noAddressCount,
-					rows: datumCheckPayload(datumCheck.rows),
-				}
-			: undefined,
-	});
+	return Response.json({ imported: statements.length });
 }
 
 /**

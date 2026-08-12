@@ -1,4 +1,4 @@
-import type { LatLng } from './geodetic.ts';
+import type { LatLng } from '../../worker/lib/geodetic.ts';
 
 /**
  * ジオコーディングAPI自体の呼び出し失敗（ネットワークエラー・タイムアウト・非2xx・

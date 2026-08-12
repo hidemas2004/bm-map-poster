@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkAndCorrectDatum, type DatumCheckRow } from './datum_check.ts';
-import { tokyoDatumToWgs84, type LatLng } from './geodetic.ts';
+import { tokyoDatumToWgs84, type LatLng } from '../../worker/lib/geodetic.ts';
 import { GeocodeServiceError } from './geocode.ts';
 
 const BASE: LatLng = { lat: 35.4717, lng: 139.4549 };

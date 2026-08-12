@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "node --test worker/lib/*.test.ts scripts/lib/*.test.mjs",
+    "test": "node --test worker/lib/*.test.ts scripts/lib/*.test.ts scripts/lib/*.test.mjs",
     "new-region": "node scripts/new-region.mjs",
+    "upload-boards": "node scripts/upload-boards.mjs",
     "convert-boards": "node scripts/lib/convert-yamato-boards.mjs"
   },
   "devDependencies": {

@@ -66,6 +66,11 @@ function buildPinIcon(row) {
 	const label = state.showLabels
 		? `<div class="pin-label">${row.board_id}</div>`
 		: '';
+	// 住所とCSV座標の整合性がジオコーディングで確認できていない掲示板（scripts/upload-boards.mjs
+	// が判定）は、中心の白丸に「？」を重ねて目視確認を促す。
+	const uncertainMark = row.location_uncertain
+		? '<text x="12" y="9" text-anchor="middle" dominant-baseline="central" font-size="6" font-weight="bold" fill="#111827">?</text>'
+		: '';
 	const html = `
 		<div class="pin-wrap">
 			${label}
@@ -73,6 +78,7 @@ function buildPinIcon(row) {
 				<path d="M12 0C7.03 0 3 4.03 3 9c0 6.75 9 15 9 15s9-8.25 9-15c0-4.97-4.03-9-9-9z"
 					fill="${fill}" stroke="#ffffff" stroke-width="1.5" />
 				<circle cx="12" cy="9" r="3.2" fill="#ffffff" />
+				${uncertainMark}
 			</svg>
 		</div>
 	`;
