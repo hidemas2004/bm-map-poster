@@ -33,6 +33,6 @@ const GPS_DOT_COLOR = '#2563eb';
 const GPS_DOT_RADIUS_PX = 8;
 
 // 経路表示（担当ピンの北→南ルート）の線の色。ステータス色・GPS色と被らない色にする。
-const ROUTE_LINE_COLOR = '#16a34a';
+const ROUTE_LINE_COLOR = '#1e3a8a';
 `;
 }

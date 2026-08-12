@@ -324,7 +324,7 @@ function computeMyRoute() {
 
 function drawRouteLine(latlngs) {
 	if (state.routeLine) map.removeLayer(state.routeLine);
-	state.routeLine = L.polyline(latlngs, { color: ROUTE_LINE_COLOR, weight: 4, opacity: 0.8, dashArray: '8 6' }).addTo(
+	state.routeLine = L.polyline(latlngs, { color: ROUTE_LINE_COLOR, weight: 6, opacity: 0.8, dashArray: '8 6' }).addTo(
 		map,
 	);
 	state.routeLine.bringToBack();
