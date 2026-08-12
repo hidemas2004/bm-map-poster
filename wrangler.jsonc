@@ -15,7 +15,15 @@
       // ローカル開発（--local）はこのIDに関わらずSQLiteエミュレーションで動作する。
       "database_id": "8a3e158e-509a-4f3f-9b89-6599173f4f83"
     }
-  ]
+  ],
+  // 大和市の地域固有値。worker/config.ts が /config.js を動的生成する際に参照する
+  // （旧 public/config.js の物理ファイルは廃止。詳細はREADME.md「複数地域の並行運用」参照）。
+  "vars": {
+    "REGION_DISPLAY_NAME": "大和市",
+    "MAP_CENTER_LAT": 35.4717,
+    "MAP_CENTER_LNG": 139.4549,
+    "MAP_ZOOM": 13
+  }
   // 複数自治体の並行運用は `env.<地域ID>` として `npm run new-region` が追記する
   // （bm-map-postingと同じ方式。詳細はREADME.md「複数地域の並行運用」参照）。
 }

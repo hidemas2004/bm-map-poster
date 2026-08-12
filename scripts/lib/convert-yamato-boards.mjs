@@ -98,11 +98,30 @@ export function buildInsertSql(boards) {
 	return lines.join('\n') + '\n';
 }
 
+function escapeCsvValue(value) {
+	const s = String(value);
+	return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/**
+ * POST /api/boards/import が要求するCSV形式（board_id,address,location_note,lat,lng）で出力する。
+ * scripts/new-region.mjsが新規地域立ち上げ時にHTTP経由で投入する際の入力ファイルとして使う
+ * （worker側の測地系自動検出・補正ロジックをそのまま適用させるため、D1への直接INSERTは行わない）。
+ */
+export function buildImportCsv(boards) {
+	const header = 'board_id,address,location_note,lat,lng';
+	const lines = boards.map((b) =>
+		[b.board_id, b.address, b.location_note, b.lat, b.lng].map(escapeCsvValue).join(','),
+	);
+	return [header, ...lines].join('\r\n') + '\r\n';
+}
+
 // CLIとして実行された場合のみファイル入出力を行う（他スクリプトからのimportも想定）。
+// 出力先の拡張子が .csv なら POST /api/boards/import 用のCSV、それ以外は従来通りSQLを出力する。
 if (import.meta.url === `file://${process.argv[1]}`) {
 	const [, , inputPath, outputPath] = process.argv;
 	if (!inputPath || !outputPath) {
-		console.error('使い方: node scripts/lib/convert-yamato-boards.mjs <input_utf8.csv> <output.sql>');
+		console.error('使い方: node scripts/lib/convert-yamato-boards.mjs <input_utf8.csv> <output.sql|output.csv>');
 		process.exit(1);
 	}
 	const text = readFileSync(inputPath, 'utf8');
@@ -111,6 +130,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		console.error('掲示場データが1件も抽出できませんでした（CSV形式を確認してください）');
 		process.exit(1);
 	}
-	writeFileSync(outputPath, buildInsertSql(boards));
+	const isCsv = outputPath.toLowerCase().endsWith('.csv');
+	writeFileSync(outputPath, isCsv ? buildImportCsv(boards) : buildInsertSql(boards));
 	console.log(`${boards.length}件の掲示板データを ${outputPath} に出力しました。`);
 }

@@ -2,14 +2,21 @@ import { handleLogin, requireAdmin, requireAuth, type AuthEnv } from './auth';
 import { exportUsersCsv, importUsers, listActiveUsers, listUsers, type UsersEnv } from './users';
 import { exportBoardsCsv, importBoards, listBoards, updateBoard, type BoardsEnv } from './boards';
 import { exportPosterActivityLogCsv, listPosterActivityLog, type PosterActivityLogEnv } from './activity_log';
+import { buildConfigResponse, type ConfigEnv } from './config';
 
-export interface Env extends AuthEnv, UsersEnv, BoardsEnv, PosterActivityLogEnv {
+export interface Env extends AuthEnv, UsersEnv, BoardsEnv, PosterActivityLogEnv, ConfigEnv {
 	ASSETS: { fetch(request: Request): Promise<Response> };
 }
 
 export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
 		const url = new URL(request.url);
+
+		if (url.pathname === '/config.js') {
+			return new Response(buildConfigResponse(env), {
+				headers: { 'content-type': 'application/javascript; charset=utf-8', 'cache-control': 'no-store' },
+			});
+		}
 
 		if (url.pathname === '/api/login' && request.method === 'POST') {
 			return handleLogin(request, env);

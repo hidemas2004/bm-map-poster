@@ -8,23 +8,26 @@
  *
  * 前提: `npx wrangler login` 済みであること（D1作成・デプロイでCloudflare認証が必要）。
  * bm-map-postingのscripts/new-region.mjsと同じ構成・同じ操作感を踏襲している
- * （境界GeoJSONの取得ステップが無い代わりに、掲示板マスタSQLを regions/<id>/boards.sql として
- * 用意してもらうステップに置き換わっている）。
+ * （境界GeoJSONの取得ステップが無い代わりに、掲示板マスタCSVを regions/<id>/boards.csv として
+ * 用意してもらうステップに置き換わっている。地域固有の見た目設定は regions/<id>/config.js の
+ * ような物理ファイルではなく wrangler.jsonc の env.<id>.vars として持たせ、worker/config.ts が
+ * /config.js を動的生成する）。
  */
 
-import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { ask, confirm, closePrompt } from './lib/prompt.mjs';
 import { appendEnvBlock, envExists } from './lib/wrangler-jsonc.mjs';
-import { buildConfigJs, computeCenterFromBoards } from './lib/config-template.mjs';
+import { parseBoardsCsv, computeCenterFromBoards } from './lib/boards-bbox.mjs';
+import { execCommand } from './lib/win-exec.mjs';
+import { ensureWranglerAuth } from './lib/wrangler-auth.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const PUBLIC_DIR = path.join(REPO_ROOT, 'public');
+const NPX = 'npx';
 
 function regionDir(id) {
 	return path.join(REPO_ROOT, 'regions', id);
@@ -35,7 +38,7 @@ function regionDir(id) {
 function run(cmd, args, options = {}) {
 	console.log(`\n$ ${cmd} ${args.join(' ')}`);
 	const stdio = options.input ? ['pipe', options.silent ? 'pipe' : 'inherit', 'inherit'] : options.silent ? 'pipe' : 'inherit';
-	return execFileSync(cmd, args, { encoding: 'utf8', cwd: REPO_ROOT, ...options, stdio });
+	return execCommand(cmd, args, { encoding: 'utf8', cwd: REPO_ROOT, ...options, stdio });
 }
 
 function extractDatabaseId(wranglerOutput) {
@@ -46,20 +49,17 @@ function extractDatabaseId(wranglerOutput) {
 	return null;
 }
 
-/** regions/<id>/boards.sql（本スクリプトが要求する固定フォーマットのINSERT文）からlat/lngを抽出する。 */
-function extractBoardsForCenter(boardsSqlPath) {
-	const text = readFileSync(boardsSqlPath, 'utf8');
-	const boards = [];
-	const re = /,\s*(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)\)\s*;/g;
-	let m;
-	while ((m = re.exec(text))) {
-		boards.push({ lat: Number(m[1]), lng: Number(m[2]) });
-	}
-	return boards;
+function extractDeployedUrl(wranglerOutput) {
+	const match = wranglerOutput.match(/https:\/\/\S+\.workers\.dev\S*/);
+	return match ? match[0].replace(/\/+$/, '') : null;
 }
 
 async function main() {
 	console.log('=== bm-map-poster: 新規地域の並行ローンチ ===\n');
+
+	// D1作成・デプロイ等の前に認証状態を確認・リフレッシュしておく（未認証やアクセストークン
+	// 期限切れのまま掲示板マスタ準備等の対話を終えた後にwrangler呼び出しで落ちるのを防ぐ）。
+	await ensureWranglerAuth();
 
 	let regionId = await ask('地域ID（例: 202704-hiratsuka。英数字とハイフンのみ）');
 	regionId = regionId.trim().toLowerCase();
@@ -82,28 +82,33 @@ async function main() {
 	writeFileSync(metaPath, JSON.stringify(meta, null, 2));
 
 	// --- 掲示板マスタの準備 ---
-	const boardsSqlPath = path.join(dir, 'boards.sql');
-	if (existsSync(boardsSqlPath)) {
-		console.log(`\n(regions/${regionId}/boards.sql は既に用意されています。このまま使用します)`);
+	const boardsCsvPath = path.join(dir, 'boards.csv');
+	if (existsSync(boardsCsvPath)) {
+		console.log(`\n(regions/${regionId}/boards.csv は既に用意されています。このまま使用します)`);
 	} else {
 		console.log('\n--- 掲示板マスタの準備 ---');
 		console.log(
-			'自治体の掲示場一覧CSVを、掲示板マスタ投入用のSQL（INSERT文）に変換して用意してください。\n' +
-				'CSV形式は自治体ごとに異なるため専用の変換スクリプトが必要です。大和市の場合:\n' +
+			'自治体の掲示場一覧CSVを、POST /api/boards/import 用のCSV（board_id,address,location_note,\n' +
+				'lat,lng）に変換して用意してください。CSV形式は自治体ごとに異なるため専用の変換スクリプトが\n' +
+				'必要です。大和市の場合:\n' +
 				'  node scripts/lib/convert-yamato-boards.mjs <入力CSV(UTF-8)> ' +
-				`regions/${regionId}/boards.sql\n` +
+				`regions/${regionId}/boards.csv\n` +
 				'他自治体の場合は、このスクリプトを参考に変換ロジックを新規に書いてください' +
 				'（README.md「掲示板マスタCSVの変換」参照）。',
 		);
-		while (!existsSync(boardsSqlPath)) {
-			await ask(`準備ができたらEnterを押してください（regions/${regionId}/boards.sql が必要です）`, {
+		while (!existsSync(boardsCsvPath)) {
+			await ask(`準備ができたらEnterを押してください（regions/${regionId}/boards.csv が必要です）`, {
 				defaultValue: ' ',
 			});
 		}
 	}
+	const boardsForCenter = parseBoardsCsv(readFileSync(boardsCsvPath, 'utf8'));
 
 	// --- 地図初期表示設定 ---
-	const boardsForCenter = extractBoardsForCenter(boardsSqlPath);
+	// 表示名・地図初期座標・ズームは regions/<id>/config.js のような物理ファイルではなく
+	// wrangler.jsonc の env.<id>.vars として持たせる（worker/config.ts が /config.js を動的生成する）。
+	// 「切り替えたら上書きする」可変ファイルが存在しないため、誤って別地域の設定が混入する事故が
+	// 構造的に起こらない（bm-map-posting issue#21と同じ設計）。
 	const suggestedCenter = computeCenterFromBoards(boardsForCenter);
 	if (!meta.mapCenter) {
 		console.log(`\n掲示板データのbbox中心から地図初期座標を算出しました: [${suggestedCenter.join(', ')}]`);
@@ -118,14 +123,10 @@ async function main() {
 	}
 	meta.mapZoom = meta.mapZoom ?? Number(await ask('地図初期ズームレベル', { defaultValue: '13' }));
 	writeFileSync(metaPath, JSON.stringify(meta, null, 2));
-	writeFileSync(
-		path.join(dir, 'config.js'),
-		buildConfigJs({ displayName: meta.displayName, center: meta.mapCenter, zoom: meta.mapZoom }),
-	);
 
 	// --- 初期管理者ユーザー ---
 	// 合言葉は平文の秘密情報なので meta.json（gitで追跡される）には一切書き込まない。
-	// DB投入が完了するまでの間だけメモリ上に保持する。
+	// DB投入・ログイン確認が完了するまでの間だけメモリ上に保持する。
 	let adminPassphrase;
 	if (!meta.dbSeeded) {
 		console.log('\n--- 初期管理者ユーザーの登録 ---');
@@ -151,7 +152,7 @@ async function main() {
 			closePrompt();
 			return;
 		}
-		const output = run('npx', ['wrangler', 'd1', 'create', d1DatabaseName], { silent: true });
+		const output = run(NPX, ['wrangler', 'd1', 'create', d1DatabaseName], { silent: true });
 		console.log(output);
 		databaseId = extractDatabaseId(output);
 		if (!databaseId) {
@@ -163,24 +164,28 @@ async function main() {
 
 	// --- wrangler.jsonc へのenv追記 ---
 	if (!envExists(regionId)) {
-		appendEnvBlock(regionId, { workerName, d1DatabaseName, databaseId });
+		appendEnvBlock(regionId, {
+			workerName,
+			d1DatabaseName,
+			databaseId,
+			vars: {
+				REGION_DISPLAY_NAME: meta.displayName,
+				MAP_CENTER_LAT: meta.mapCenter[0],
+				MAP_CENTER_LNG: meta.mapCenter[1],
+				MAP_ZOOM: meta.mapZoom,
+			},
+		});
 		console.log(`\nwrangler.jsonc に env.${regionId} を追記しました。`);
 	}
 
-	// --- マイグレーション・掲示板マスタ・初期管理者の投入 ---
+	// --- マイグレーション・初期管理者の投入 ---
+	// 掲示板マスタはここではD1に直接INSERTしない。デプロイ後、実際にデプロイされたWorkerの
+	// POST /api/boards/import をそのまま叩く（issue#3の測地系自動検出・補正ロジックを
+	// Worker内で完結させたまま新規地域の初期投入にも適用させるため）。
 	if (!meta.dbSeeded) {
-		console.log('\n--- D1へのマイグレーション・データ投入 ---');
-		run('npx', ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0001_init.sql']);
-		run('npx', [
-			'wrangler',
-			'd1',
-			'execute',
-			d1DatabaseName,
-			'--env',
-			regionId,
-			'--remote',
-			`--file=${path.relative(REPO_ROOT, boardsSqlPath)}`,
-		]);
+		console.log('\n--- D1へのマイグレーション・初期管理者の投入 ---');
+		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0001_init.sql']);
+		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0002_add_memo.sql']);
 
 		// 合言葉が平文で入るSQLはリポジトリ外（OS一時ディレクトリ）に書き、投入後に必ず削除する。
 		const esc = (s) => s.replace(/'/g, "''");
@@ -188,7 +193,7 @@ async function main() {
 		const adminSqlPath = path.join(os.tmpdir(), `bm-map-poster-admin-${regionId}-${crypto.randomUUID()}.sql`);
 		writeFileSync(adminSqlPath, adminSql);
 		try {
-			run('npx', ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', `--file=${adminSqlPath}`]);
+			run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', `--file=${adminSqlPath}`]);
 		} finally {
 			rmSync(adminSqlPath, { force: true });
 		}
@@ -201,7 +206,7 @@ async function main() {
 	if (!meta.secretsSet) {
 		console.log('\n--- Secretsの自動生成・設定 ---');
 		const sessionSecret = crypto.randomBytes(32).toString('hex');
-		run('npx', ['wrangler', 'secret', 'put', 'SESSION_SECRET', '--env', regionId], { input: sessionSecret + '\n' });
+		run(NPX, ['wrangler', 'secret', 'put', 'SESSION_SECRET', '--env', regionId], { input: sessionSecret + '\n' });
 		meta.secretsSet = true;
 		writeFileSync(metaPath, JSON.stringify(meta, null, 2));
 		console.log('(値はCloudflare側にのみ保存され、このスクリプトの出力には表示されません)');
@@ -224,16 +229,63 @@ async function main() {
 		return;
 	}
 
-	copyFileSync(path.join(dir, 'config.js'), path.join(PUBLIC_DIR, 'config.js'));
-	console.log(`\n(public/config.js を ${regionId} の内容に切り替えました)`);
+	console.log('\n--- デプロイ ---');
+	const deployOutput = run(NPX, ['wrangler', 'deploy', '--env', regionId], { silent: true });
+	console.log(deployOutput);
+	let deployedUrl = extractDeployedUrl(deployOutput);
 
-	run('npx', ['wrangler', 'deploy', '--env', regionId]);
+	// --- 掲示板マスタの投入（デプロイ後、HTTP経由）---
+	if (!meta.boardsSeeded) {
+		console.log('\n--- 掲示板マスタの投入 ---');
+		if (!deployedUrl) {
+			deployedUrl = await ask('デプロイ先URLを自動抽出できませんでした。掲示板マスタ投入のため、URLを貼り付けてください');
+		}
+		if (!adminPassphrase) {
+			adminPassphrase = await ask(`管理者「${meta.adminUserId}」の合言葉を再入力してください（掲示板マスタ投入のログインに使用）`);
+		}
+		try {
+			const loginRes = await fetch(`${deployedUrl}/api/login`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ user_id: meta.adminUserId, passphrase: adminPassphrase }),
+			});
+			if (!loginRes.ok) {
+				console.error(`\n管理者ログインに失敗しました（${loginRes.status}）。掲示板マスタの投入をスキップします。後で /boards.html から手動でアップロードしてください。`);
+			} else {
+				const { token } = await loginRes.json();
+				const csvText = readFileSync(boardsCsvPath, 'utf8');
+				const importRes = await fetch(`${deployedUrl}/api/boards/import`, {
+					method: 'POST',
+					headers: { Authorization: `Bearer ${token}`, 'content-type': 'text/csv' },
+					body: csvText,
+				});
+				if (!importRes.ok) {
+					console.error(`\n掲示板マスタの投入に失敗しました（${importRes.status}）: ${await importRes.text()}`);
+					console.error('後で /boards.html から手動でアップロードしてください。');
+				} else {
+					const result = await importRes.json();
+					console.log(`\n掲示板マスタを${result.imported}件投入しました。`);
+					if (result.datum_corrected) {
+						console.log(`（日本測地系の座標を自動補正しました: ${result.corrected_count}件）`);
+					}
+					if (result.warnings?.length > 0) {
+						console.log(`警告${result.warnings.length}件:`);
+						for (const w of result.warnings) console.log(`  ${w.message}`);
+					}
+					meta.boardsSeeded = true;
+					writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+				}
+			}
+		} catch (err) {
+			console.error(`\n掲示板マスタの投入中にエラーが発生しました: ${err.message}`);
+			console.error('後で /boards.html から手動でアップロードしてください。');
+		}
+	}
 
 	console.log('\n=== 完了 ===');
-	console.log(`Worker「${workerName}」をデプロイしました（URLはデプロイログを参照）。`);
+	console.log(`Worker「${workerName}」をデプロイしました${deployedUrl ? `（${deployedUrl}）` : '（URLはデプロイログを参照）'}。`);
 	console.log(`ログイン: ユーザーID「${meta.adminUserId}」・上で入力した合言葉。`);
 	console.log('担当者の追加は /users.html のCSVインポート機能から行ってください。');
-	console.log(`現在 public/ は「${regionId}」の内容です。別地域を扱う場合は改めてこのスクリプトを実行してください。`);
 
 	closePrompt();
 }

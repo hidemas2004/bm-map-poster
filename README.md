@@ -32,8 +32,8 @@
   `board_id`は自治体採番の掲示板番号をそのまま使う（例: 大和市の場合「1-1」のような
   投票区番号-連番形式。自治体により表記は異なる）。
 - **ステータス**: `未着手` / `貼付済` / `トラブル` の3値。地図上のピンはステータスに応じて
-  色分けされる（`public/config.js`の`STATUS_COLORS`）。`貼付済`に変更すると`posted_at`
-  （貼付日時）が自動更新される。
+  色分けされる（`worker/config.ts`の`STATUS_COLORS`。`/config.js`として動的配信される）。
+  `貼付済`に変更すると`posted_at`（貼付日時）が自動更新される。
 - **担当者**: `users`テーブルの1行。掲示板1件につき1名まで割り当てられる。
 
 ## コマンド
@@ -64,8 +64,8 @@ npx wrangler d1 execute bm-poster-db --local --file=seed/users.sql
 ## 地図画面
 
 - 掲示板マスタの座標位置にしずく型のピンを表示（中央に白丸）。ピンはステータス
-  （`未着手`=濃いめのブルー / `貼付済`=オレンジ / `トラブル`=赤。`public/config.js`の
-  `STATUS_COLORS`で定義）によって色分けされる。
+  （`未着手`=濃いめのブルー / `貼付済`=オレンジ / `トラブル`=赤。`worker/config.ts`の
+  `STATUS_COLORS`で定義し、`/config.js`として動的配信）によって色分けされる。
 - ピンをタップするとポップアップが開き、ステータス・担当者・メモの変更が可能（更新は
   `POST /api/board/update`。ステータス・担当者の変更内容は`poster_activity_log`に自動記録される。
   メモの変更は記録対象外）。
@@ -106,6 +106,13 @@ iconv -f SHIFT_JIS -t UTF-8 -o senkyo_utf8.csv senkyo.csv
 node scripts/lib/convert-yamato-boards.mjs senkyo_utf8.csv seed/boards_yamato.sql
 ```
 
+出力先の拡張子で形式を切り替える（`.sql`ならSQL、`.csv`なら`POST /api/boards/import`が
+読めるCSV）。`npm run new-region`（下記「複数地域の並行運用」）は後者を使う。
+
+```bash
+node scripts/lib/convert-yamato-boards.mjs senkyo_utf8.csv regions/<地域ID>/boards.csv
+```
+
 大和市のCSVは投票所一覧・期日前投票所一覧・掲示場一覧の3つの表がヘッダー行ごと縦に連結された
 形式で、`名称`列が`<投票区番号>-<連番>`（例: `1-1`）の行だけを掲示場一覧として抽出している
 （一部の投票区で全角風のハイフン類似記号が使われる表記揺れがあるため正規化してから判定する）。
@@ -130,6 +137,13 @@ bm-map-postingの`users.ts`と同一実装。`GET /api/users` / `GET /api/users/
 大和市とは別に複数の市区町村を**並行して**稼働させる場合、bm-map-postingと同じ方式
 （`wrangler.jsonc`の`env.<地域ID>`）で追加する。
 
+**地域固有の値は`wrangler.jsonc`の`env.<id>.vars`として持たせ、`/config.js`は
+`worker/config.ts`の`buildConfigResponse()`が`env`から動的生成する**（表示名・地図初期座標・
+ズーム）。ステータス色等の見た目パラメータは全地域共通として`worker/config.ts`に一本化して
+あり、`public/config.js`のような「地域を切り替えたら上書きする」可変ファイルは存在しない
+（誤って`git add -A`しても別地域の内容が混入する事故が構造的に起こらない。bm-map-posting
+issue#21と同じ設計）。大和市（`wrangler.jsonc`トップレベル）にもこの方式を適用済み。
+
 ```bash
 npx wrangler login   # 初回のみ
 npm run new-region
@@ -139,27 +153,28 @@ npm run new-region
 ステップはスキップして続きから再開できる）:
 
 1. 地域ID（例: `202704-hiratsuka`）・表示名を入力
-2. 掲示板マスタSQL（`regions/<id>/boards.sql`）の準備。自治体向けの変換スクリプトが
-   無ければ「掲示板マスタCSVの変換」を参照して新規に用意する
-3. 掲示板データのbboxから地図初期座標を自動算出（上書き可）・`regions/<id>/config.js`を生成
+2. 掲示板マスタCSV（`regions/<id>/boards.csv`、`POST /api/boards/import`と同じ形式）の準備。
+   自治体向けの変換スクリプトが無ければ「掲示板マスタCSVの変換」を参照して新規に用意する
+3. 掲示板データのbboxから地図初期座標を自動算出（上書き可）
 4. 初期管理者ユーザーを1名だけ登録（以降の担当者追加はデプロイ後に`/users.html`のCSV
    インポートで行う）
-5. D1データベースを新規作成し、`wrangler.jsonc`に`env.<id>`ブロックを追記
-6. マイグレーション・掲示板マスタ・管理者ユーザーを新D1へ投入
+5. D1データベースを新規作成し、`wrangler.jsonc`に`env.<id>`ブロック（`vars`込み）を追記
+6. マイグレーション・管理者ユーザーを新D1へ投入
 7. `SESSION_SECRET`を自動生成し`wrangler secret put`で設定（値は画面に表示されない）
 8. **ここまでの入力内容を一覧表示し、「この内容でデプロイしてよいか」を確認**
-9. 確認後、`public/config.js`を該当地域の内容に切り替えて `wrangler deploy --env <id>`を実行
+9. 確認後`wrangler deploy --env <id>`を実行。デプロイ直後に新規管理者アカウントでログインして
+   `POST /api/boards/import`へ`regions/<id>/boards.csv`を自動投入する（測地系自動検出・補正
+   ロジック〈issue#3〉がそのまま効く。Node側でCSVを直接D1へINSERTすることはしない）
 
-- 各地域の設定は `regions/<地域ID>/`（`meta.json`・`config.js`・`boards.sql`）にまとめて
-  保存される。**合言葉などの秘密情報はここには保存されない**（OS一時ディレクトリ経由で
-  D1に投入後、即削除する設計）。
-- デプロイ後、ローカルの`public/config.js`には直前にデプロイした地域の内容が残る。別地域を
-  扱う際は改めてこのスクリプトを実行すれば自動的に切り替わる。
+- 各地域の設定は `regions/<地域ID>/`（`meta.json`・`boards.csv`）にまとめて保存される。
+  **合言葉などの秘密情報はどちらにも保存されない**（OS一時ディレクトリ経由でD1に投入・
+  ログイン確認後、即メモリから破棄する設計）。
 - スクリプト本体は `scripts/new-region.mjs`（オーケストレーション）、
   `scripts/lib/wrangler-jsonc.mjs`（`wrangler.jsonc`への安全な追記）、
-  `scripts/lib/config-template.mjs`（`config.js`生成・bbox中心計算）に分かれている
-  （bm-map-postingと同じ分割方針。e-Stat境界データ取得に相当するステップはbm-map-posterには
-  無い）。
+  `scripts/lib/boards-bbox.mjs`（掲示板CSVのbbox中心計算）、`scripts/lib/win-exec.mjs`
+  （Windowsで`npx`等の`.cmd`ラッパーを安全に起動する）、`scripts/lib/wrangler-auth.mjs`
+  （重い対話フローに入る前のwrangler認証チェック）に分かれている（bm-map-postingと同じ
+  分割方針。e-Stat境界データ取得・エリア境界に相当するステップはbm-map-posterには無い）。
 
 ## 既知の制約・今後の作業
 
@@ -167,7 +182,8 @@ npm run new-region
   の手順に沿って専用の変換スクリプトを用意し、「複数地域の並行運用」の手順で追加する。
 - **座標データの精度**: 大和市の掲示場一覧CSVは緯度経度を含んでいたためそのまま利用できたが、
   住所文字列しか含まないCSVを配布する自治体の場合、別途ジオコーディング（住所→緯度経度変換）
-  が必要になる。現状は未対応。
+  が必要になる。現状は未対応（ただし`POST /api/boards/import`は住所ベースの測地系ズレ検出
+  〈issue#3〉は行っているため、日本測地系のまま投入した場合の座標補正には対応している）。
 - **オフライン耐性は未対応**: 告示日当日、電波の弱い場所での使用も想定されるが、通信断時に
   ステータス変更をローカルに保持して後で同期する仕組み（Service Worker等）は無い。
 - **同時編集の排他制御は無し**: 複数人が同じ掲示板をほぼ同時に更新した場合、後勝ちで上書きされる
