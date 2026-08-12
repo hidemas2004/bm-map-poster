@@ -13,16 +13,23 @@
  * Web画面から直接CSVをアップロードする経路（/boards.html）は測地系チェックを一切行わず
  * 入力データをそのまま採用するので、掲示板マスタの新規投入・座標更新は必ずこのスクリプト
  * 経由で行うこと。
+ *
+ * アップロード先URLは region-id から regions/<id>/meta.json の deployedUrl を自動的に使う
+ * （手入力を求めない）。CSVパスとデプロイ先を両方手入力させると「region-idはA地域だがURLは
+ * B地域」のような取り違えが起きうるため（姉妹プロジェクトbm-map-postingで実際に発生した事故を
+ * 踏まえた対策）。meta.jsonにdeployedUrlが無い場合のみ入力を求め、次回のために保存する。
+ * また、board_idが一致する行は上書きされ取り消せないため、送信直前に地域名・CSVパス・行数・
+ * 送信先URLを表示して最終確認を挟む。
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { parseCsv, toCsv } from '../worker/csv.ts';
 import { checkAndCorrectDatum } from './lib/datum_check.ts';
 import { tokyoDatumToWgs84 } from '../worker/lib/geodetic.ts';
-import { ask, closePrompt } from './lib/prompt.mjs';
+import { ask, confirm, closePrompt } from './lib/prompt.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -139,8 +146,31 @@ async function main() {
 	});
 	const uploadCsv = toCsv(OUTPUT_HEADER, outRows);
 
-	console.log('\n--- アップロード先の指定 ---');
-	const deployedUrl = (await ask('デプロイ先URL（例: https://bm-map-poster-xxxx.xxxx.workers.dev）')).replace(/\/+$/, '');
+	let deployedUrl = meta.deployedUrl;
+	if (deployedUrl) {
+		console.log(`\nアップロード先: ${deployedUrl}（regions/${regionId}/meta.jsonから自動決定）`);
+	} else {
+		console.log('\n--- アップロード先の指定 ---');
+		console.log(`regions/${regionId}/meta.json に deployedUrl が無いため、手入力してください。`);
+		deployedUrl = (await ask('デプロイ先URL（例: https://bm-map-poster-xxxx.xxxx.workers.dev）')).replace(/\/+$/, '');
+		meta.deployedUrl = deployedUrl;
+		writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+		console.log(`（次回のために regions/${regionId}/meta.json へ保存しました）`);
+	}
+
+	console.log('\n--- 最終確認 ---');
+	console.log(`  地域:         ${meta.displayName ?? regionId}（${regionId}）`);
+	console.log(`  CSVファイル:  ${csvPath}`);
+	console.log(`  件数:         ${parsed.length}件`);
+	console.log(`  送信先:       ${deployedUrl}`);
+	console.log('  ※ board_idが一致する行は上書きされます。取り消しはできません。');
+	const proceed = await confirm('この内容でアップロードしてよいですか？', { defaultValue: false });
+	if (!proceed) {
+		console.log('\n中断しました。');
+		closePrompt();
+		return;
+	}
+
 	const adminUserId = await ask('管理者ユーザーID', { defaultValue: meta.adminUserId });
 	const adminPassphrase = await ask(`管理者「${adminUserId}」の合言葉`);
 

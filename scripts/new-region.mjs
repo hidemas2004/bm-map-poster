@@ -233,6 +233,12 @@ async function main() {
 	const deployOutput = run(NPX, ['wrangler', 'deploy', '--env', regionId], { silent: true });
 	console.log(deployOutput);
 	let deployedUrl = extractDeployedUrl(deployOutput);
+	if (deployedUrl && meta.deployedUrl !== deployedUrl) {
+		// scripts/upload-boards.mjs 等がアップロード先を自動決定するために使う
+		// （手入力によるリージョン取り違え事故を防ぐ。bm-map-posting側で実際に発生した事故を踏まえた対策）。
+		meta.deployedUrl = deployedUrl;
+		writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+	}
 
 	// --- 掲示板マスタの投入（デプロイ後、HTTP経由）---
 	if (!meta.boardsSeeded) {
