@@ -83,9 +83,6 @@ function buildPinIcon(row) {
 	});
 }
 
-// フィルタ対象外のピンは地図から消さず、薄く表示する（全体の中での位置関係が分かるように）。
-const FILTERED_OUT_OPACITY = 0.3;
-
 function addOrUpdateMarker(row) {
 	let marker = state.markers.get(row.board_id);
 	if (!marker) {

@@ -31,5 +31,9 @@ const STATUS_LABELS = Object.keys(STATUS_COLORS);
 // GPS現在地マーカー
 const GPS_DOT_COLOR = '#2563eb';
 const GPS_DOT_RADIUS_PX = 8;
+
+// フィルタ対象外のピンの不透明度（0〜1）。地図から消さず薄く表示し、全体の中での位置関係が
+// 分かるようにする（issue#4）。
+const FILTERED_OUT_OPACITY = 0.15;
 `;
 }

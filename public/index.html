@@ -11,12 +11,16 @@
 <body class="map-page">
 <header id="header">
   <div class="header-row header-row-controls">
-    <select id="assignee-filter"></select>
-    <div class="status-filter" id="status-filter"></div>
-    <label class="label-toggle"><input type="checkbox" id="label-toggle"> ラベル表示</label>
-    <div class="header-actions">
-      <button id="gps-button" type="button" title="現在地">📍</button>
-      <button id="menu-button" type="button" title="メニュー">&#8801;</button>
+    <div class="header-row-controls-top">
+      <select id="assignee-filter"></select>
+      <div class="header-actions">
+        <button id="gps-button" type="button" title="現在地">📍</button>
+        <button id="menu-button" type="button" title="メニュー">&#8801;</button>
+      </div>
+    </div>
+    <div class="header-row-controls-bottom">
+      <div class="status-filter" id="status-filter"></div>
+      <label class="label-toggle"><input type="checkbox" id="label-toggle"> ラベル表示</label>
     </div>
   </div>
   <div class="header-row header-row-stats" id="header-stats">

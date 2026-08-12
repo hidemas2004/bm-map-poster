@@ -26,7 +26,15 @@ body.map-page { display: flex; flex-direction: column; overflow: hidden; }
   padding-top: 0; font-size: 12px; gap: 16px; color: #cbd5e1;
 }
 .header-row-stats strong { color: #f3f4f6; font-weight: 700; }
-.header-actions { display: flex; gap: 6px; margin-left: auto; align-items: center; }
+
+/* 担当者フィルタ・ステータスフィルタ・ラベル表示・GPS/メニューボタンが横一列だと、
+   スマホ幅では折り返し位置が画面幅次第で不安定になる（要素同士が中途半端な位置で
+   折り返る）ため、2行に固定する（issue#4）: 1行目=担当者フィルタ(左)+GPS/メニュー(右)、
+   2行目=ステータスフィルタ+ラベル表示(左寄せ)。 */
+.header-row-controls { flex-direction: column; align-items: stretch; gap: 6px; }
+.header-row-controls-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.header-row-controls-bottom { display: flex; align-items: center; gap: 8px; }
+.header-actions { display: flex; gap: 6px; align-items: center; }
 #header h1 { font-size: 15px; margin: 0; white-space: nowrap; }
 #header select { font-size: 13px; height: 30px; padding: 0 6px; border-radius: 6px; border: none; cursor: pointer; }
 .label-toggle { display: flex; align-items: center; gap: 4px; font-size: 12px; color: #f3f4f6; cursor: pointer; white-space: nowrap; }
@@ -44,17 +52,20 @@ body.map-page { display: flex; flex-direction: column; overflow: hidden; }
 
 /* ステータスフィルタ（トグルボタン群）。既定は全ボタンactive=全表示。
    背景色はJS側（app.js buildStatusFilterButtons）でSTATUS_COLORSから設定し、ピンの色と揃える。
-   高さは担当者フィルタ(select)と、横幅はボタン同士で揃える。 */
+   高さは担当者フィルタ(select)と、横幅はボタン同士で揃える。フォントサイズは「ラベル表示」
+   チェックボックス(.label-toggle、12px)に揃える（issue#4）。`#header .status-filter button`
+   のように#headerを含めて詳細度を上げないと、`#header button`（font-size:16px）に負けて
+   意図したサイズが反映されない（実際に発生していた不具合）。 */
 .status-filter { display: flex; gap: 4px; }
 /* flex-shrink:0とwhite-space:nowrapが無いと、ヘッダーが狭い時にボタン幅が縮んで文字が折り返し、
    .header-rowのoverflow-x:hidden（overflow-yも連動してクリップされる。#header付近のコメント参照）
    により折り返した2行目が見えなくなる（「トラブル」が「トラ」だけに見える不具合の原因）。 */
-.status-filter button {
+#header .status-filter button {
   flex-shrink: 0; white-space: nowrap;
   display: flex; align-items: center; justify-content: center;
-  font-size: 11px; height: 30px; width: 64px; padding: 0; color: #f3f4f6; opacity: 0.5;
+  font-size: 12px; height: 30px; width: 64px; padding: 0; color: #f3f4f6; opacity: 0.5;
 }
-.status-filter button.active { opacity: 1; border-color: #f3f4f6; }
+#header .status-filter button.active { opacity: 1; border-color: #f3f4f6; }
 
 .header-toggle-hint {
   text-align: center; font-size: 10px; color: #6b7280; line-height: 1;
