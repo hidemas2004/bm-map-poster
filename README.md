@@ -38,18 +38,22 @@
 
 ## コマンド
 
+「無名のデフォルト環境」は存在しない設計のため、`dev`/`deploy`は**必ず`--env <地域ID>`を指定する**
+（大和市を含む全地域が`env.<地域ID>`の名前付き環境。詳細は下記「複数地域の並行運用」）。
+
 ```bash
 npm install
-npx wrangler dev      # ローカル確認。.dev.vars.example を参考に .dev.vars を作成しておく
-npx wrangler deploy   # 本番デプロイ（要 Cloudflare 認証・D1本番データベース作成）
+npx wrangler dev --env 14213-yamato      # ローカル確認。.dev.vars.example を参考に .dev.vars を作成しておく
+npx wrangler deploy --env 14213-yamato   # 本番デプロイ（要 Cloudflare 認証）
 ```
 
 ### ローカルD1の初期化
 
 ```bash
-npx wrangler d1 execute bm-poster-db --local --file=migrations/0001_init.sql
-npx wrangler d1 execute bm-poster-db --local --file=seed/boards_yamato.sql
-npx wrangler d1 execute bm-poster-db --local --file=seed/users.sql
+npx wrangler d1 execute bm-poster-db-14213-yamato --env 14213-yamato --local --file=migrations/0001_init.sql
+npx wrangler d1 execute bm-poster-db-14213-yamato --env 14213-yamato --local --file=migrations/0002_add_memo.sql
+npx wrangler d1 execute bm-poster-db-14213-yamato --env 14213-yamato --local --file=seed/boards_yamato.sql
+npx wrangler d1 execute bm-poster-db-14213-yamato --env 14213-yamato --local --file=seed/users.sql
 ```
 
 ## シークレット・環境変数
@@ -188,7 +192,7 @@ npm run new-region
   ステータス変更をローカルに保持して後で同期する仕組み（Service Worker等）は無い。
 - **同時編集の排他制御は無し**: 複数人が同じ掲示板をほぼ同時に更新した場合、後勝ちで上書きされる
   （実運用上、1ピンに複数人が同時に貼付作業をすることは考えにくいため許容している）。
-- **`npm run new-region`は未検証**: 2つ目以降の地域を`env.<id>`として並行追加するフローは、
-  実機のCloudflare環境でまだ実行したことがない。初めて実行する際は各ステップの出力
-  （特に`wrangler d1 create`の`database_id`抽出）を確認しながら進めること
-  （大和市（トップレベル設定）は本番デプロイ済み）。
+- **`npm run new-region`は未検証**: 大和市（`env.14213-yamato`）は本番デプロイ済みだが、
+  対話スクリプト`new-region.mjs`自体（境界データ収集ステップが無いこと以外は同じ流れ）を
+  実機で通したことはまだ無い。初めて実行する際は各ステップの出力（特に`wrangler d1 create`の
+  `database_id`抽出）を確認しながら進めること。
