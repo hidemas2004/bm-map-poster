@@ -3,8 +3,9 @@ import { exportUsersCsv, importUsers, listActiveUsers, listUsers, type UsersEnv 
 import { exportBoardsCsv, importBoards, listBoards, updateBoard, type BoardsEnv } from './boards';
 import { exportPosterActivityLogCsv, listPosterActivityLog, type PosterActivityLogEnv } from './activity_log';
 import { buildConfigResponse, type ConfigEnv } from './config';
+import { fetchRoadRoute, type RouteEnv } from './route';
 
-export interface Env extends AuthEnv, UsersEnv, BoardsEnv, PosterActivityLogEnv, ConfigEnv {
+export interface Env extends AuthEnv, UsersEnv, BoardsEnv, PosterActivityLogEnv, ConfigEnv, RouteEnv {
 	ASSETS: { fetch(request: Request): Promise<Response> };
 }
 
@@ -47,6 +48,9 @@ export default {
 			}
 			if (url.pathname === '/api/board/update' && request.method === 'POST') {
 				return updateBoard(request, env, user);
+			}
+			if (url.pathname === '/api/route' && request.method === 'POST') {
+				return fetchRoadRoute(request, env);
 			}
 			if (url.pathname === '/api/activity-log' && request.method === 'GET') {
 				return listPosterActivityLog(env);

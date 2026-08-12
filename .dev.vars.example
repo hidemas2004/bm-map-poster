@@ -3,3 +3,7 @@
 
 # セッショントークンの署名に使う秘密鍵
 SESSION_SECRET=change-me-to-a-random-string
+
+# 経路表示機能（道路沿いルート取得）で使うOpenRouteServiceの無料APIキー
+# https://openrouteservice.org/dev/#/signup で取得（クレジットカード不要・1日2000回まで無料）
+ORS_API_KEY=change-me-to-your-openrouteservice-api-key

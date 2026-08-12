@@ -64,6 +64,7 @@ npx wrangler d1 execute bm-poster-db-14213-yamato --env 14213-yamato --local --f
 | 変数名 | 用途 |
 |---|---|
 | `SESSION_SECRET` | ログインセッショントークンの署名鍵 |
+| `ORS_API_KEY` | 経路表示機能（道路沿いルート取得）で使うOpenRouteServiceの無料APIキー。[openrouteservice.org](https://openrouteservice.org/dev/#/signup)でサインアップして取得する（クレジットカード不要・1日2000回まで無料）。本番投入前に`wrangler secret put ORS_API_KEY --env <地域ID>`で設定すること。 |
 
 ## 地図画面
 
@@ -79,6 +80,11 @@ npx wrangler d1 execute bm-poster-db-14213-yamato --env 14213-yamato --local --f
 - ヘッダのステータスフィルタ（3つのトグルボタン、ピンと同じ色）で、表示するステータスを選べる
   （複数選択可。既定は全表示）。フィルタで対象外になったピンは地図から消えるのではなく、
   薄い表示（半透明）になる。
+- ヘッダの「経路表示」チェックボックスをONにすると、自分が担当する未着手のピンを緯度の降順
+  （北→南）に並べ、`POST /api/route`経由でOpenRouteService（徒歩プロファイル）から取得した
+  道路沿いの経路を線で表示する（`トラブル`・`貼付済`のピンは対象外）。表示中はステータス変更が
+  あっても自動再計算せず、チェックを外して入れ直したときだけその時点の未着手ピンで再計算する。
+  ORS APIの呼び出しに失敗した場合はピンを直線で結んだ簡易表示にフォールバックする。
 
 ## 掲示板マスタのCSVインポート/エクスポート（`public/boards.html`、管理者限定）
 

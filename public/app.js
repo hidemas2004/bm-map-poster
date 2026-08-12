@@ -17,6 +17,7 @@ const state = {
 	watchId: null,
 	gpsMarker: null,
 	routeLine: null,
+	routeRequestId: 0,
 };
 
 async function apiFetch(path, options = {}) {
@@ -308,10 +309,12 @@ gpsButton.addEventListener('click', () => {
 });
 
 // ---- 経路表示 ----
-// 自分が担当する未着手ピンを緯度の降順（北→南）に並べただけの単純なルート。
+// 自分が担当する未着手ピンを緯度の降順（北→南）に並べただけの単純な訪問順。
 // 道路網を考慮したTSP等ではなく、前日までに立てた移動計画に沿って上から順に処理していく運用を想定。
 // チェックを入れている間はステータス変更があってもルートを自動再計算しない（歩行中に線が動くと
 // かえって使いにくいため）。チェックを外して入れ直したときだけ、その時点の未着手ピンで再計算する。
+// 訪問順が決まった後、ピン間をどう結ぶかはPOST /api/route（OpenRouteService中継）で道路沿いの
+// 経路座標を取得して描画する。API呼び出しに失敗した場合は直線ルートにフォールバックする。
 
 function computeMyRoute() {
 	return [...state.boards.values()]
@@ -319,8 +322,19 @@ function computeMyRoute() {
 		.sort((a, b) => b.lat - a.lat);
 }
 
+function drawRouteLine(latlngs) {
+	if (state.routeLine) map.removeLayer(state.routeLine);
+	state.routeLine = L.polyline(latlngs, { color: ROUTE_LINE_COLOR, weight: 4, opacity: 0.8, dashArray: '8 6' }).addTo(
+		map,
+	);
+	state.routeLine.bringToBack();
+	map.fitBounds(state.routeLine.getBounds(), { padding: [40, 40] });
+}
+
 const routeToggle = document.getElementById('route-toggle');
-routeToggle.addEventListener('change', (e) => {
+routeToggle.addEventListener('change', async (e) => {
+	const requestId = ++state.routeRequestId;
+
 	if (state.routeLine) {
 		map.removeLayer(state.routeLine);
 		state.routeLine = null;
@@ -333,12 +347,29 @@ routeToggle.addEventListener('change', (e) => {
 		routeToggle.checked = false;
 		return;
 	}
-	state.routeLine = L.polyline(
-		rows.map((row) => [row.lat, row.lng]),
-		{ color: ROUTE_LINE_COLOR, weight: 4, opacity: 0.8, dashArray: '8 6' },
-	).addTo(map);
-	state.routeLine.bringToBack();
-	map.fitBounds(state.routeLine.getBounds(), { padding: [40, 40] });
+	if (rows.length === 1) return; // 結ぶ相手がいないので線は引かない
+
+	const straightLatLngs = rows.map((row) => [row.lat, row.lng]);
+
+	routeToggle.disabled = true;
+	try {
+		const res = await apiFetch('/api/route', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ waypoints: rows.map((row) => ({ lat: row.lat, lng: row.lng })) }),
+		});
+		if (requestId !== state.routeRequestId) return; // その間にチェックが変更された古いリクエストは破棄
+
+		if (!res.ok) throw new Error('route api error');
+		const data = await res.json();
+		drawRouteLine(data.coordinates.map((p) => [p.lat, p.lng]));
+	} catch {
+		if (requestId !== state.routeRequestId) return;
+		drawRouteLine(straightLatLngs);
+		alert('道路ルートを取得できなかったため、直線で仮表示しています');
+	} finally {
+		if (requestId === state.routeRequestId) routeToggle.disabled = false;
+	}
 });
 
 // ---- メニュー ----
