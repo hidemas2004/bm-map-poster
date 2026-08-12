@@ -1,5 +1,6 @@
 import { csvResponse, parseCsv, toCsv } from './csv';
 import type { SessionUser } from './auth';
+import { checkAndCorrectDatum, type DatumRowResult } from './lib/datum_check';
 
 export interface BoardsEnv {
 	DB: D1Database;
@@ -46,6 +47,15 @@ export async function exportBoardsCsv(env: BoardsEnv): Promise<Response> {
 	return csvResponse(csv, 'poster_boards.csv');
 }
 
+function datumCheckPayload(datumCheck: DatumRowResult[]) {
+	return datumCheck.map((r) => ({
+		line: r.line,
+		bucket: r.bucket,
+		dist_raw_m: r.distRawM,
+		dist_conv_m: r.distConvM,
+	}));
+}
+
 /**
  * 掲示板マスタ一括投入・更新（管理者限定）。`board_id`が既存ならUPSERT、なければ新規追加。
  * CSVヘッダ: board_id, address, location_note, lat, lng, status, assignee_id, memo
@@ -55,8 +65,13 @@ export async function exportBoardsCsv(env: BoardsEnv): Promise<Response> {
  * - status列を空欄にすると、既存行は現在のステータスを維持し、新規行は「未着手」になる
  *   （選挙当日、進行中の状態を一括CSVで誤って巻き戻さないための配慮）。
  * - memo列はaddress/location_noteと同様、セルの内容がそのまま反映される（列自体が無い場合は空欄扱い）。
+ * - 住所と座標を突き合わせ、日本測地系（Tokyo Datum）のズレを自動検出・補正する
+ *   （bm-map-posting issue#16と同根、bm-map-poster issue#3）。バッチ全体が日本測地系とみなせる
+ *   場合は全行を世界測地系に補正してからインポートする。整合性が確認できない行が多い場合は
+ *   中断し、`force=true`クエリパラメータ付きで再送すると警告を無視してそのままインポートできる。
  */
 export async function importBoards(request: Request, env: BoardsEnv): Promise<Response> {
+	const force = new URL(request.url).searchParams.get('force') === 'true';
 	let text = await request.text();
 	if (text.charCodeAt(0) === 0xfeff) text = text.slice(1); // UTF-8 BOM除去
 
@@ -92,7 +107,20 @@ export async function importBoards(request: Request, env: BoardsEnv): Promise<Re
 	const userNameById = new Map(activeUsers.map((u) => [u.user_id, u.name]));
 	const existingStatusById = new Map(existingBoards.map((b) => [b.board_id, b.status]));
 
-	const statements = [];
+	interface ParsedRow {
+		lineNo: number;
+		boardId: string;
+		address: string;
+		locationNote: string;
+		lat: number;
+		lng: number;
+		status: BoardStatus;
+		assigneeId: string | null;
+		assigneeName: string;
+		memo: string;
+	}
+
+	const parsedRows: ParsedRow[] = [];
 	for (const [i, r] of dataRows.entries()) {
 		const lineNo = i + 2; // ヘッダ行ぶん+1、1始まりで+1
 		const boardId = (r[colIndex.board_id] ?? '').trim();
@@ -137,20 +165,70 @@ export async function importBoards(request: Request, env: BoardsEnv): Promise<Re
 			assigneeName = name;
 		}
 
-		statements.push(
-			env.DB.prepare(
-				`INSERT INTO poster_boards (board_id, address, location_note, lat, lng, status, assignee_id, assignee_name, memo)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-				 ON CONFLICT(board_id) DO UPDATE SET
-				   address = excluded.address, location_note = excluded.location_note,
-				   lat = excluded.lat, lng = excluded.lng, status = excluded.status,
-				   assignee_id = excluded.assignee_id, assignee_name = excluded.assignee_name, memo = excluded.memo`,
-			).bind(boardId, address, locationNote, lat, lng, status, assigneeId, assigneeName, memo),
+		parsedRows.push({ lineNo, boardId, address, locationNote, lat, lng, status, assigneeId, assigneeName, memo });
+	}
+
+	// 測地系（日本測地系/世界測地系）のズレを自動検出・補正する（bm-map-poster issue#3）。
+	// 住所テキストをジオコーディングした期待座標とCSVの座標を突き合わせ、バッチ全体が
+	// 日本測地系とみなせる場合は全行を世界測地系に補正してからインポートする。
+	const datumCheck = await checkAndCorrectDatum(
+		parsedRows.map((r) => ({ line: r.lineNo, address: r.address, lat: r.lat, lng: r.lng })),
+	);
+
+	if (datumCheck.verdict === 'abort' && !force) {
+		return Response.json(
+			{
+				error: '住所と座標の整合性が確認できないため、インポートを中断しました。行ごとの判定結果を確認の上、必要であれば強制インポートしてください。',
+				datum_check: {
+					ok_count: datumCheck.okCount,
+					candidate_count: datumCheck.candidateCount,
+					unresolved_count: datumCheck.unresolvedCount,
+					no_address_count: datumCheck.noAddressCount,
+					rows: datumCheckPayload(datumCheck.rows),
+				},
+			},
+			{ status: 400 },
 		);
 	}
+
+	const finalRows =
+		datumCheck.verdict === 'correct_all'
+			? parsedRows.map((r) => {
+					const corrected = datumCheck.correctedCoords.get(r.lineNo);
+					return corrected ? { ...r, lat: corrected.lat, lng: corrected.lng } : r;
+				})
+			: parsedRows;
+
+	const statements = finalRows.map((r) =>
+		env.DB.prepare(
+			`INSERT INTO poster_boards (board_id, address, location_note, lat, lng, status, assignee_id, assignee_name, memo)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(board_id) DO UPDATE SET
+			   address = excluded.address, location_note = excluded.location_note,
+			   lat = excluded.lat, lng = excluded.lng, status = excluded.status,
+			   assignee_id = excluded.assignee_id, assignee_name = excluded.assignee_name, memo = excluded.memo`,
+		).bind(r.boardId, r.address, r.locationNote, r.lat, r.lng, r.status, r.assigneeId, r.assigneeName, r.memo),
+	);
 	await env.DB.batch(statements);
 
-	return Response.json({ imported: statements.length });
+	const forced = datumCheck.verdict === 'abort' && force;
+	return Response.json({
+		imported: statements.length,
+		datum_corrected: datumCheck.verdict === 'correct_all',
+		corrected_count: datumCheck.correctedCount,
+		datum_check_note: datumCheck.note,
+		warnings: datumCheck.warnings,
+		datum_check_forced: forced,
+		datum_check: forced
+			? {
+					ok_count: datumCheck.okCount,
+					candidate_count: datumCheck.candidateCount,
+					unresolved_count: datumCheck.unresolvedCount,
+					no_address_count: datumCheck.noAddressCount,
+					rows: datumCheckPayload(datumCheck.rows),
+				}
+			: undefined,
+	});
 }
 
 /**
